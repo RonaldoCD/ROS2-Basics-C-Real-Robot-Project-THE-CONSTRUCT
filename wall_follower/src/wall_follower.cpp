@@ -1,78 +1,201 @@
+#define _USE_MATH_DEFINES
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include <chrono>
+#include <vector>
+#include <cmath>
+#include <iostream>
+#include <cstdlib>
 
+using namespace std;
 using namespace std::chrono_literals;
 using std::placeholders::_1;
 
-class TopicsQuiz : public rclcpp::Node
+
+vector<float> euler_from_quaternion(float x, float y, float z, float w){
+    float sinr_cosp = 2 * (w * x + y * z);
+    float cosr_cosp = 1 - 2 * (x * x + y * y);
+    float roll = atan2(sinr_cosp, cosr_cosp);
+    
+    float sinp = 2 * (w * y - z * x);
+    float pitch = asin(sinp);
+
+    float siny_cosp = 2 * (w * z + x * y);
+    float cosy_cosp = 1 - 2 * (y * y + z * z);
+    float yaw = atan2(siny_cosp, cosy_cosp);
+
+    vector<float> euler_angles(3, 0.0);
+    euler_angles[0] = roll;
+    euler_angles[1] = pitch;
+    euler_angles[2] = yaw;
+
+    return euler_angles;
+}
+
+class WallFollower : public rclcpp::Node
 {
 public:
-  TopicsQuiz()
-  : Node("topics_project")
-  {
-    publisher_ = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
-    subscription_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-      "/scan", rclcpp::SensorDataQoS(), std::bind(&TopicsQuiz::scan_callback, this, _1));
-    timer_ = this->create_wall_timer(
-      500ms, std::bind(&TopicsQuiz::timer_callback, this));
-    this->laser_left = 0.0;
-    this->laser_right = 0.0;
-    this->laser_forward = 0.0;
+    WallFollower()
+    : Node("topics_project")
+    {
+        vel_publisher = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
+        odom_subscriber = this->create_subscription<nav_msgs::msg::Odometry>(
+        "odom", 10, std::bind(&WallFollower::odom_subs_callback, this, _1));
+        scan_subscriber = this->create_subscription<sensor_msgs::msg::LaserScan>(
+        "scan", rclcpp::SensorDataQoS(), std::bind(&WallFollower::scan_subs_callback, this, _1));
+        timer_ = this->create_wall_timer(
+        500ms, std::bind(&WallFollower::robot_motion, this));
+        print_timer = this->create_wall_timer(
+        2000ms, std::bind(&WallFollower::print_function, this));
+        
+        this->rotation_z = 0.0;
+        this->distance_to_wall = 0.0;
+        this->distance_to_front_wall= 0.0;
+        this->offset_angle = 0.0;
+        this->linear_vel = 0.08;
+        this->angular_vel = 0.1;
+        this->dist_tol = 0.03;
+        this->angle_tol = 3.0*M_PI/180;
+        this->timer_period = 0.5;
 
-  }
+    }
 
 private:
-  geometry_msgs::msg::Twist twist; 
-
-  void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
-  {
-
-    this->laser_left = msg->ranges[180];
-    this->laser_right = msg->ranges[540];
-    this->laser_forward = msg->ranges[360];
-
-    RCLCPP_INFO(this->get_logger(), "[LEFT] = '%f'", this->laser_left);
-    RCLCPP_INFO(this->get_logger(), "[RIGHT] = '%f'", this->laser_right);
-    RCLCPP_INFO(this->get_logger(), "[FORWARD] = '%f'", this->laser_forward);
     
-  }
-
-  void timer_callback()
-  {
-    if (this->laser_forward <= 1.0 || this->laser_right <= 1.0) 
-    {
-        this->twist_msg.angular.z = 0.3;
-        this->twist_msg.linear.x = 0.0;
-    }            
-    else if (this->laser_left <= 1.0)
-    {
-        this->twist_msg.angular.z = -0.3;
-        this->twist_msg.linear.x = 0.0;
+    void print_function(){
+        RCLCPP_INFO(this->get_logger(), "--------------");
+        RCLCPP_INFO(this->get_logger(), "Rotation z = '%f'", this->rotation_z * 180 / M_PI);
+        RCLCPP_INFO(this->get_logger(), "Distance to wall = '%f'", this->distance_to_wall);
+        RCLCPP_INFO(this->get_logger(), "Distance to front wall = '%f'", this->distance_to_front_wall);
+        RCLCPP_INFO(this->get_logger(), "Offset angle = '%f'", this->offset_angle * 180 / M_PI);
+        RCLCPP_INFO(this->get_logger(), "--------------");
     }
-    else
+    void scan_subs_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
     {
-        this->twist_msg.angular.z = 0.0;
-        this->twist_msg.linear.x = 0.3;
+        float offset_angle = fmod(this->rotation_z, (M_PI/2.0));
+        if (offset_angle >= M_PI/4 && offset_angle < M_PI/2){
+            offset_angle -= M_PI / 2;
+        }
+        
+        this->offset_angle = offset_angle;
+        float range_angle = (3 * M_PI / 2) - offset_angle - M_PI;
+        int ranges_length = msg->ranges.size();
+        int range_idx = range_angle * ranges_length / (2 * M_PI);
+        this->distance_to_wall = msg->ranges[range_idx];
+        this->distance_to_front_wall = msg->ranges[ranges_length/2];
     }
 
-    publisher_->publish(this->twist_msg);  
-  }
+    void odom_subs_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
+    {   
+        float q_x = msg->pose.pose.orientation.x;
+        float q_y = msg->pose.pose.orientation.y;
+        float q_z = msg->pose.pose.orientation.z;
+        float q_w = msg->pose.pose.orientation.w;
 
-  rclcpp::TimerBase::SharedPtr timer_;
-  rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr publisher_;
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr subscription_;
-  geometry_msgs::msg::Twist twist_msg; 
-  float laser_left;
-  float laser_right;
-  float laser_forward;
+        vector<float> euler_angles = euler_from_quaternion(q_x, q_y, q_z, q_w);
+        float yaw = euler_angles[2];
+        
+        float rotation_z = fmod(yaw,M_PI);
+        if (yaw < 0){
+            rotation_z += M_PI;
+        }
+
+        this->rotation_z = rotation_z;
+        
+        // RCLCPP_INFO(this->get_logger(), "[LEFT] = '%f'", this->laser_left);
+        // RCLCPP_INFO(this->get_logger(), "[RIGHT] = '%f'", this->laser_right);
+        // RCLCPP_INFO(this->get_logger(), "[FORWARD] = '%f'", this->laser_forward);
+        
+    }
+
+    void robot_motion()
+    {
+        geometry_msgs::msg::Twist msg;
+        if (this->distance_to_front_wall < 0.5){
+            msg.linear.x = 0.6 * this->linear_vel;
+            msg.angular.z = 4 * this->angular_vel;
+            RCLCPP_INFO(this->get_logger(), "Wall in front");
+        }
+        else{
+            if (this->distance_to_wall > 0.3){
+                msg.linear.x = this->linear_vel;
+                msg.angular.z = -1 * this->angular_vel;
+                RCLCPP_INFO(this->get_logger(), "Going to the right wall");
+            }
+            else if (this->distance_to_wall < 0.2) {
+                msg.linear.x = this->linear_vel;
+                msg.angular.z = this->angular_vel;
+                RCLCPP_INFO(this->get_logger(), "Going away from the right wall");
+            }
+            else {
+                RCLCPP_INFO(this->get_logger(), "In the right are");
+                vector<float> velocities = this->motion_to_center();
+                msg.linear.x = velocities[0];
+                msg.angular.z = velocities[1];
+                
+            }      
+        }
+        RCLCPP_INFO(this->get_logger(), "(lin_x, ang_z) = ('%f', '%f')", msg.linear.x, msg.angular.z);
+        vel_publisher->publish(msg);
+    }
+
+    vector<float> motion_to_center(){
+        float linear_x, angular_z;
+        float delta_dist_to_wall = this->distance_to_wall - 0.25;
+        int turn_sign = 1;
+        if (delta_dist_to_wall > 0){
+            turn_sign = -1;
+            RCLCPP_INFO(this->get_logger(), "1. negative turn");
+        }
+        if (abs(delta_dist_to_wall) >= this->dist_tol){
+            float dist_to_go = abs(delta_dist_to_wall) / sin(abs(this->offset_angle));
+            if (dist_to_go / (this->timer_period * this->linear_vel) >= 1){
+                RCLCPP_INFO(this->get_logger(), "2. normal velocities");
+                linear_x = this->linear_vel;
+                angular_z = turn_sign * this->angular_vel; 
+            }
+            else{
+                linear_x = (dist_to_go / (this->timer_period * this->linear_vel)) * this->linear_vel;
+                angular_z = (-1) * (this->offset_angle/2.0) / this->timer_period;
+                RCLCPP_INFO(this->get_logger(), "2. calculate velocities"); 
+            }
+        }
+        else{
+            linear_x = this->linear_vel;
+            if (this->offset_angle >= this->angle_tol){
+                angular_z = (-1) * this->offset_angle / this->timer_period;
+                RCLCPP_INFO(this->get_logger(), "3. calculate angular velocity");
+            }
+        }
+        vector<float> velocities(2, 0.0);
+        velocities[0] = linear_x;
+        velocities[1] = angular_z;
+        return velocities;
+    }
+
+
+    rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr print_timer;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr vel_publisher;
+    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscriber;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber;
+    float rotation_z;
+    float distance_to_wall;
+    float distance_to_front_wall;
+    float offset_angle;
+    float linear_vel;
+    float angular_vel;
+    float dist_tol;
+    float angle_tol;
+    float timer_period;
 };
 
 int main(int argc, char * argv[])
 {
-  rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<TopicsQuiz>());
-  rclcpp::shutdown();
-  return 0;
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<WallFollower>());
+    rclcpp::shutdown();
+    return 0;
 }
