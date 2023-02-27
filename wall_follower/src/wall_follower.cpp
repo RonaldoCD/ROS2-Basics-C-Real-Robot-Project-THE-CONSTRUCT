@@ -1,3 +1,4 @@
+#include "rclcpp/logging.hpp"
 #define _USE_MATH_DEFINES
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -54,9 +55,9 @@ public:
         this->distance_to_wall = 0.0;
         this->distance_to_front_wall= 0.0;
         this->offset_angle = 0.0;
-        this->linear_vel = 0.08;
+        this->linear_vel = 0.1;
         this->angular_vel = 0.1;
-        this->dist_tol = 0.03;
+        this->dist_tol = 0.02;
         this->angle_tol = 3.0*M_PI/180;
         this->timer_period = 0.5;
 
@@ -114,30 +115,31 @@ private:
     {
         geometry_msgs::msg::Twist msg;
         if (this->distance_to_front_wall < 0.5){
-            msg.linear.x = 0.6 * this->linear_vel;
-            msg.angular.z = 4 * this->angular_vel;
-            RCLCPP_INFO(this->get_logger(), "Wall in front");
+            msg.linear.x = 0.3 * this->linear_vel;
+            msg.angular.z = 4.0 * this->angular_vel;
+            RCLCPP_WARN(this->get_logger(), "Wall in front");
         }
         else{
             if (this->distance_to_wall > 0.3){
                 msg.linear.x = this->linear_vel;
-                msg.angular.z = -1 * this->angular_vel;
-                RCLCPP_INFO(this->get_logger(), "Going to the right wall");
+                msg.angular.z = -1 * this->angular_vel * 1.4;
+                RCLCPP_WARN(this->get_logger(), "Going to the right wall");
             }
             else if (this->distance_to_wall < 0.2) {
                 msg.linear.x = this->linear_vel;
-                msg.angular.z = this->angular_vel;
-                RCLCPP_INFO(this->get_logger(), "Going away from the right wall");
+                msg.angular.z = this->angular_vel * 1.4;
+                RCLCPP_WARN(this->get_logger(), "Going away from the right wall");
             }
             else {
-                RCLCPP_INFO(this->get_logger(), "In the right are");
+                RCLCPP_INFO(this->get_logger(), "In the right area");
                 vector<float> velocities = this->motion_to_center();
                 msg.linear.x = velocities[0];
                 msg.angular.z = velocities[1];
                 
             }      
         }
-        RCLCPP_INFO(this->get_logger(), "(lin_x, ang_z) = ('%f', '%f')", msg.linear.x, msg.angular.z);
+        
+        // RCLCPP_INFO(this->get_logger(), "(lin_x, ang_z) = ('%f', '%f')", msg.linear.x, msg.angular.z);
         vel_publisher->publish(msg);
     }
 
@@ -147,27 +149,56 @@ private:
         int turn_sign = 1;
         if (delta_dist_to_wall > 0){
             turn_sign = -1;
-            RCLCPP_INFO(this->get_logger(), "1. negative turn");
         }
+        
         if (abs(delta_dist_to_wall) >= this->dist_tol){
-            float dist_to_go = abs(delta_dist_to_wall) / sin(abs(this->offset_angle));
-            if (dist_to_go / (this->timer_period * this->linear_vel) >= 1){
-                RCLCPP_INFO(this->get_logger(), "2. normal velocities");
+            if ((delta_dist_to_wall > 0 && this->offset_angle > 0) || (delta_dist_to_wall<0 && this->offset_angle<0)){
                 linear_x = this->linear_vel;
-                angular_z = turn_sign * this->angular_vel; 
+                angular_z = turn_sign * this->angular_vel;    
+            // RCLCPP_INFO(this->get_logger(), "1. negative turn");
             }
-            else{
-                linear_x = (dist_to_go / (this->timer_period * this->linear_vel)) * this->linear_vel;
-                angular_z = (-1) * (this->offset_angle/2.0) / this->timer_period;
-                RCLCPP_INFO(this->get_logger(), "2. calculate velocities"); 
+            else if ((delta_dist_to_wall > 0 && this->offset_angle < 0)||(delta_dist_to_wall < 0 && this->offset_angle > 0)) {
+                float dist_to_go = abs(delta_dist_to_wall) / sin(abs(this->offset_angle));
+                if (dist_to_go / (this->timer_period * this->linear_vel) >= 1){
+                    linear_x = this->linear_vel;
+                    angular_z = (-0.5) * turn_sign * this->angular_vel; 
+                }
+                else{
+                    linear_x = (dist_to_go / (this->timer_period * this->linear_vel)) * this->linear_vel;
+                    angular_z = (-0.5) * turn_sign * this->offset_angle / this->timer_period;
+                }
             }
+                // RCLCPP_INFO(this->get_logger(), "2. normal velocities");          
+                // RCLCPP_INFO(this->get_logger(), "2. calculate velocities"); 
         }
         else{
             linear_x = this->linear_vel;
+            RCLCPP_INFO(this->get_logger(), "Inside distance tolerance");
             if (this->offset_angle >= this->angle_tol){
-                angular_z = (-1) * this->offset_angle / this->timer_period;
-                RCLCPP_INFO(this->get_logger(), "3. calculate angular velocity");
+                linear_x = 0.5 * this->linear_vel;
+                if (this->offset_angle > 0){
+                    angular_z = (-1) * this->offset_angle / this->timer_period;
+                }
+                else if(this->offset_angle < 0){
+                    angular_z = (+1) * this->offset_angle / this->timer_period;
+                }
+                else {
+                    angular_z = 0.0;
+                }
+                // RCLCPP_INFO(this->get_logger(), "3. calculate angular velocity");
             }
+            else {
+                angular_z = 0.0;
+            }
+        }
+
+        if (abs(angular_z) > this->angular_vel){
+            if (angular_z < 0){
+                angular_z = - this->angular_vel;
+            } 
+            else {
+                angular_z = this->angular_vel;
+            }            
         }
         vector<float> velocities(2, 0.0);
         velocities[0] = linear_x;
