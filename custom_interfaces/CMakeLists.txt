@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(wall_follower)
+project(custom_interfaces)
 
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
@@ -17,11 +17,9 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
-find_package(nav_msgs REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(geometry_msgs REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -34,19 +32,8 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-add_executable(wall_follower_node src/wall_follower.cpp)
-ament_target_dependencies(wall_follower_node rclcpp std_msgs nav_msgs sensor_msgs geometry_msgs)
-
-
-install(TARGETS
-   wall_follower_node
-   DESTINATION lib/${PROJECT_NAME}
- )
-
-# Install launch files.
-install(DIRECTORY
-  launch
-  DESTINATION share/${PROJECT_NAME}/
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/FindWall.srv"
 )
 
 ament_package()
