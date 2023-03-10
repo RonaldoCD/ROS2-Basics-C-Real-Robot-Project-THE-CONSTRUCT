@@ -1,3 +1,5 @@
+#include "rclcpp/utilities.hpp"
+#include <iterator>
 #define _USE_MATH_DEFINES
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/twist.hpp"
@@ -10,6 +12,7 @@
 #include <iostream>
 #include <cstdlib>
 #include <unistd.h>
+#include <memory>
 
 
 using namespace std;
@@ -47,7 +50,7 @@ class WallFinderNode : public rclcpp::Node
     WallFinderNode()
     : Node("find_wall_node")
     {
-        callback_group_1 =this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        callback_group =this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
         
         odom_callback_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
         rclcpp::SubscriptionOptions options1;
@@ -57,8 +60,7 @@ class WallFinderNode : public rclcpp::Node
         rclcpp::SubscriptionOptions options2;
         options2.callback_group = scan_callback_group;
 
-
-        find_wall_srv = create_service<FindWall>("find_wall", std::bind(&WallFinderNode::wall_finder_srv_callback, this, _1, _2));
+        find_wall_srv = create_service<FindWall>("find_wall", std::bind(&WallFinderNode::wall_finder_srv_callback, this, _1, _2), rmw_qos_profile_services_default, callback_group);
         twist_publisher = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
         odom_subscriber = this->create_subscription<Odom>("odom", 10, std::bind(&WallFinderNode::odom_callback, this, _1), options1);
         scan_subscriber = this->create_subscription<Scan>("scan", 10, std::bind(&WallFinderNode::scan_callback, this, _1), options2);
@@ -78,7 +80,7 @@ class WallFinderNode : public rclcpp::Node
     rclcpp::Subscription<Odom>::SharedPtr odom_subscriber;
     rclcpp::Subscription<Scan>::SharedPtr scan_subscriber;
 
-    rclcpp::CallbackGroup::SharedPtr callback_group_1;
+    rclcpp::CallbackGroup::SharedPtr callback_group;
     rclcpp::CallbackGroup::SharedPtr odom_callback_group;
     rclcpp::CallbackGroup::SharedPtr scan_callback_group;
 
@@ -132,7 +134,7 @@ class WallFinderNode : public rclcpp::Node
         RCLCPP_INFO(this->get_logger(), "Last objective angle: '%f'", final_objective_angle * 180 / M_PI);
         while (fmod(abs(this->angle_z - final_objective_angle), 2*M_PI) > this->angle_tol){
             message.linear.x = 0.0;
-            message.angular.z = self.angular_z;
+            message.angular.z = this->angular_z;
             twist_publisher->publish(message);
         }
         message.linear.x = 0.0;
@@ -146,15 +148,28 @@ class WallFinderNode : public rclcpp::Node
     void scan_callback(const Scan::SharedPtr msg)
     {
         if (!this->nearest_wall_identified){
-            int N_ranges = sizeof(msg->ranges) / sizeof(msg->ranges[0]);
+
+            int N_ranges = round(1.0 + (msg->angle_max - msg->angle_min) / msg->angle_increment);
+            RCLCPP_INFO(this->get_logger(), "N ranges 2: '%d'", N_ranges);
+            
             vector<float> ranges;
-            ranges.insert(ranges.begin(), msg->ranges, msg->ranges + N);
+            copy(begin(msg->ranges), end(msg->ranges), back_inserter(ranges));
+            // ranges.insert(ranges.begin(), msg->ranges, msg->ranges + N_ranges);
             vector<float>::iterator min_range_idx_iter = min_element(ranges.begin(), ranges.end());
             int min_range_idx = distance(ranges.begin(), min_range_idx_iter);
-            RCLCPP_INFO(this->get_logger(), "Min range idx: '%f'", min_range_idx);
+            RCLCPP_INFO(this->get_logger(), "Min range idx: '%d'", min_range_idx);
             float min_range_angle = (2 * M_PI * (min_range_idx + 1)) / N_ranges;
 
+            for (int i=0; i<10; i++){
+                cout << ranges[i] << " ";
+            }
+            cout << "\n";
+            for (int i=0; i<10; i++){
+                cout << msg->ranges[i] << " ";
+            }
+
             this->angle_to_rotate = min_range_angle - M_PI;
+            RCLCPP_INFO(this->get_logger(), "Angle to rotate: '%f'", this->angle_to_rotate * 180 / M_PI);
             this->nearest_wall_identified = true;
         }
         this->dist_to_wall = msg->ranges[360];
@@ -170,21 +185,26 @@ class WallFinderNode : public rclcpp::Node
 
         vector<float> euler_angles = euler_from_quaternion(q_x, q_y, q_z, q_w);
         float yaw = euler_angles[2];
+        // RCLCPP_INFO(this->get_logger(), "Yaw: '%f'", yaw * 180 / M_PI);
         
-        float angle_z = fmod(yaw, M_PI);
         if (yaw < 0){
-            angle_z += M_PI;
+            float modulo = M_PI + yaw;
+            yaw = M_PI + modulo;
         }
-        this->angle_z = angle_z;
+        this->angle_z = yaw;
 
-        RCLCPP_INFO(this->get_logger(), "Angle direction with respect to Z: '%f'", angle_z * 180 / M_PI);
+        // RCLCPP_INFO(this->get_logger(), "Angle direction with respect to Z: '%f'", angle_z * 180 / M_PI);
     }
 };
 
 int main(int argc, char * argv[])
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<ServerNode>());
+    std::shared_ptr<WallFinderNode> wall_finder_node = std::make_shared<WallFinderNode>();
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(wall_finder_node);
+    executor.spin();
+
     rclcpp::shutdown();
     return 0;
 }

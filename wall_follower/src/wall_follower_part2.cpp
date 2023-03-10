@@ -1,14 +1,18 @@
+#include "custom_interfaces/srv/detail/find_wall__struct.hpp"
 #include "rclcpp/logging.hpp"
 #define _USE_MATH_DEFINES
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "nav_msgs/msg/odometry.hpp"
+#include "custom_interfaces/srv/find_wall.hpp"
+
 #include <chrono>
 #include <vector>
 #include <cmath>
 #include <iostream>
 #include <cstdlib>
+#include <memory>
 
 using namespace std;
 using namespace std::chrono_literals;
@@ -226,7 +230,34 @@ private:
 int main(int argc, char * argv[])
 {
     rclcpp::init(argc, argv);
+
+    std::shared_ptr<rclcpp::Node> node = rclcpp::Node::make_shared("find_wall_client");
+    rclcpp::Client<custom_interfaces::srv::FindWall>::SharedPtr client =
+        node->create_client<custom_interfaces::srv::FindWall>("find_wall");
+
+    auto request = std::make_shared<custom_interfaces::srv::FindWall::Request>();
+
+    while (!client->wait_for_service(1s)) {
+        if (!rclcpp::ok()) {
+        RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "Interrupted while waiting for the service. Exiting.");
+        return 0;
+        }
+        RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
+    }
+
+    auto result_future = client->async_send_request(request);
+
+    if (rclcpp::spin_until_future_complete(node, result_future) ==
+        rclcpp::FutureReturnCode::SUCCESS)
+    {
+        auto result = result_future.get();
+        RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "The robot is moving");
+    } else {
+        RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "Failed to call service /moving");
+    }
+
     rclcpp::spin(std::make_shared<WallFollower>());
     rclcpp::shutdown();
     return 0;
 }
+
