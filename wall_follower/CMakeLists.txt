@@ -18,6 +18,7 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -44,11 +45,19 @@ ament_target_dependencies(wall_finder_node rclcpp std_msgs nav_msgs sensor_msgs 
 add_executable(wall_follower_node_part2 src/wall_follower_part2.cpp)
 ament_target_dependencies(wall_follower_node_part2 rclcpp std_msgs nav_msgs sensor_msgs geometry_msgs custom_interfaces)
 
+add_executable(wall_follower_node_part3 src/wall_follower_part3.cpp)
+ament_target_dependencies(wall_follower_node_part3 rclcpp std_msgs nav_msgs sensor_msgs geometry_msgs custom_interfaces rclcpp_action)
+
+add_executable(odom_recorder_server_node src/odom_recorder_server.cpp)
+ament_target_dependencies(odom_recorder_server_node rclcpp std_msgs nav_msgs sensor_msgs geometry_msgs custom_interfaces rclcpp_action)
 
 install(TARGETS
    wall_follower_node
    wall_finder_node
    wall_follower_node_part2
+   wall_follower_node_part3
+   odom_recorder_server_node
+   
    DESTINATION lib/${PROJECT_NAME}
  )
 
