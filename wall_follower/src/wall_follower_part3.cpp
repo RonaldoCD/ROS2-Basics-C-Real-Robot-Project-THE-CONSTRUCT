@@ -1,3 +1,4 @@
+
 #include "custom_interfaces/action/detail/odom_record__struct.hpp"
 #include "custom_interfaces/srv/detail/find_wall__struct.hpp"
 #include "rclcpp/logging.hpp"
@@ -19,7 +20,7 @@
 
 using namespace std;
 using namespace std::chrono_literals;
-using namespace std::placeholders;
+using std::placeholders::_1;
 
 vector<float> euler_from_quaternion(float x, float y, float z, float w){
     float sinr_cosp = 2 * (w * x + y * z);
@@ -50,18 +51,24 @@ public:
     explicit WallFollower(const rclcpp::NodeOptions & node_options = rclcpp::NodeOptions())
     : Node("wall_follower", node_options), goal_done_(false)
     {
-        wall_follower_callback_group =this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-        action_client_callback_group =this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        RCLCPP_INFO(this->get_logger(), "WALL FOLLOWER NODE HAS INITIALIZED");
+        subscribers_callback_group =this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+        publishers_callback_group =this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+        action_client_callback_group =this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+        
         rclcpp::SubscriptionOptions options1;
-        options1.callback_group = wall_follower_callback_group;
+        options1.callback_group = subscribers_callback_group;
+
+        rclcpp::SubscriptionOptions options2;
+        options2.callback_group = subscribers_callback_group;
 
         vel_publisher = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
         odom_subscriber = this->create_subscription<nav_msgs::msg::Odometry>(
             "odom", 10, std::bind(&WallFollower::odom_subs_callback, this, _1), options1);
         scan_subscriber = this->create_subscription<sensor_msgs::msg::LaserScan>(
-            "scan", rclcpp::SensorDataQoS(), std::bind(&WallFollower::scan_subs_callback, this, _1), options1);
-        timer_ = this->create_wall_timer(500ms, std::bind(&WallFollower::robot_motion, this), wall_follower_callback_group);
-        print_timer = this->create_wall_timer(2000ms, std::bind(&WallFollower::print_function, this), wall_follower_callback_group);
+            "scan", rclcpp::SensorDataQoS(), std::bind(&WallFollower::scan_subs_callback, this, _1), options2);
+        timer_ = this->create_wall_timer(500ms, std::bind(&WallFollower::robot_motion, this), publishers_callback_group);
+        print_timer = this->create_wall_timer(2000ms, std::bind(&WallFollower::print_function, this), publishers_callback_group);
         
         this->client_ptr_ = rclcpp_action::create_client<OdomRecord>(
             this->get_node_base_interface(),
@@ -81,7 +88,6 @@ public:
         this->dist_tol = 0.02;
         this->angle_tol = 3.0*M_PI/180;
         this->timer_period = 0.5;
-
     }
 
     bool is_goal_done() const
@@ -91,7 +97,7 @@ public:
 
     void send_goal()
     {
-        // using namespace std::placeholders;
+        using namespace std::placeholders;
 
         this->action_client_timer_->cancel();
 
@@ -113,14 +119,14 @@ public:
 
         auto send_goal_options = rclcpp_action::Client<OdomRecord>::SendGoalOptions();
                     
-        send_goal_options.goal_response_callback =
-        std::bind(&WallFollower::goal_response_callback, this, _1);
+        send_goal_options.goal_response_callback = 
+            std::bind(&WallFollower::goal_response_callback, this, _1);
 
         send_goal_options.feedback_callback =
-        std::bind(&WallFollower::feedback_callback, this, _1, _2);
+            std::bind(&WallFollower::feedback_callback, this, _1, _2);
 
         send_goal_options.result_callback =
-        std::bind(&WallFollower::result_callback, this, _1);
+            std::bind(&WallFollower::result_callback, this, _1);
         
         auto goal_handle_future = this->client_ptr_->async_send_goal(goal_msg, send_goal_options);
     }
@@ -176,31 +182,35 @@ private:
     void robot_motion()
     {
         geometry_msgs::msg::Twist msg;
-        if (this->distance_to_front_wall < 0.5){
-            msg.linear.x = this->linear_vel;
-            msg.angular.z = 4.5 * this->angular_vel;
-            RCLCPP_WARN(this->get_logger(), "Wall in front");
-        }
-        else{
-            if (this->distance_to_wall > 0.3){
+        if(!this->goal_done_){
+            if (this->distance_to_front_wall < 0.5){
                 msg.linear.x = this->linear_vel;
-                msg.angular.z = -1 * this->angular_vel * 1.4;
-                RCLCPP_WARN(this->get_logger(), "Going to the right wall");
+                msg.angular.z = 4.5 * this->angular_vel;
+                RCLCPP_WARN(this->get_logger(), "Wall in front");
             }
-            else if (this->distance_to_wall < 0.2) {
-                msg.linear.x = this->linear_vel;
-                msg.angular.z = this->angular_vel * 1.4;
-                RCLCPP_WARN(this->get_logger(), "Going away from the right wall");
+            else{
+                if (this->distance_to_wall > 0.3){
+                    msg.linear.x = this->linear_vel;
+                    msg.angular.z = -1 * this->angular_vel * 1.4;
+                    RCLCPP_WARN(this->get_logger(), "Going to the right wall");
+                }
+                else if (this->distance_to_wall < 0.2) {
+                    msg.linear.x = this->linear_vel;
+                    msg.angular.z = this->angular_vel * 1.4;
+                    RCLCPP_WARN(this->get_logger(), "Going away from the right wall");
+                }
+                else {
+                    RCLCPP_INFO(this->get_logger(), "In the right area");
+                    vector<float> velocities = this->motion_to_center();
+                    msg.linear.x = velocities[0];
+                    msg.angular.z = velocities[1];
+                }      
             }
-            else {
-                RCLCPP_INFO(this->get_logger(), "In the right area");
-                vector<float> velocities = this->motion_to_center();
-                msg.linear.x = velocities[0];
-                msg.angular.z = velocities[1];
-                
-            }      
         }
-        
+        else {
+            msg.linear.x = 0.0;
+            msg.angular.z = 0.0;     
+        }
         // RCLCPP_INFO(this->get_logger(), "(lin_x, ang_z) = ('%f', '%f')", msg.linear.x, msg.angular.z);
         vel_publisher->publish(msg);
     }
@@ -270,8 +280,9 @@ private:
 
     // Functions of the action client 
 
-    void goal_response_callback(const GoalHandleOdomRecord::SharedPtr & goal_handle)
+    void goal_response_callback(std::shared_future<GoalHandleOdomRecord::SharedPtr> future)
     {
+        auto goal_handle = future.get();
         if (!goal_handle) {
         RCLCPP_ERROR(this->get_logger(), "Goal was rejected by server");
         } else {
@@ -305,10 +316,6 @@ private:
         }
 
         RCLCPP_INFO(this->get_logger(), "RESULT RECEIVED");
-        geometry_msgs::msg::Twist msg;
-        msg.linear.x = 0.0;
-        msg.angular.z = 0.0;
-        vel_publisher->publish(msg);
     }
 
     rclcpp::TimerBase::SharedPtr timer_;
@@ -319,7 +326,8 @@ private:
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscriber;
     rclcpp_action::Client<OdomRecord>::SharedPtr client_ptr_;
     
-    rclcpp::CallbackGroup::SharedPtr wall_follower_callback_group;
+    rclcpp::CallbackGroup::SharedPtr subscribers_callback_group;
+    rclcpp::CallbackGroup::SharedPtr publishers_callback_group;
     rclcpp::CallbackGroup::SharedPtr action_client_callback_group;
     
     float rotation_z;
@@ -352,6 +360,9 @@ int main(int argc, char * argv[])
         RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
     }
 
+    rclcpp::Rate loop_rate(1);
+    loop_rate.sleep();
+
     auto result_future = client->async_send_request(request);
 
     if (rclcpp::spin_until_future_complete(node, result_future) ==
@@ -364,7 +375,11 @@ int main(int argc, char * argv[])
     }
 
     
-    rclcpp::shutdown();
+    // rclcpp::shutdown();
+    // rclcpp::init(argc, argv);
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "SLEEP");
+    loop_rate.sleep();
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "AWAKE");
 
     auto wall_follower_node = std::make_shared<WallFollower>();        
     rclcpp::executors::MultiThreadedExecutor executor;
@@ -378,4 +393,3 @@ int main(int argc, char * argv[])
 
     return 0;
 }
-

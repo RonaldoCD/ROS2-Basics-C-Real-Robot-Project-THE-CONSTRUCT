@@ -51,12 +51,16 @@ ament_target_dependencies(wall_follower_node_part3 rclcpp std_msgs nav_msgs sens
 add_executable(odom_recorder_server_node src/odom_recorder_server.cpp)
 ament_target_dependencies(odom_recorder_server_node rclcpp std_msgs nav_msgs sensor_msgs geometry_msgs custom_interfaces rclcpp_action)
 
+# add_executable(odom_recorder_client_node src/odom_recorder_server.cpp)
+# ament_target_dependencies(odom_recorder_server_node rclcpp std_msgs nav_msgs sensor_msgs geometry_msgs custom_interfaces rclcpp_action)
+
 install(TARGETS
    wall_follower_node
    wall_finder_node
    wall_follower_node_part2
    wall_follower_node_part3
    odom_recorder_server_node
+#    odom_recorder_client_node
    
    DESTINATION lib/${PROJECT_NAME}
  )

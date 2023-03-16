@@ -31,21 +31,22 @@ class OdomRecorderServer : public rclcpp::Node
     {
         using namespace std::placeholders;
 
-        odom_callback_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-        action_callback_group = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+        action_callback_group = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+        callback_group = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
         rclcpp::SubscriptionOptions options1;
-        options1.callback_group = odom_callback_group;
-
-        this->action_server_ = rclcpp_action::create_server<OdomRecord>(
-        this,
-        "record_odom",
-        std::bind(&OdomRecorderServer::handle_goal, this, _1, _2),
-        std::bind(&OdomRecorderServer::handle_cancel, this, _1),
-        std::bind(&OdomRecorderServer::handle_accepted, this, _1),
-        rcl_action_server_get_default_options(),
-        action_callback_group);
+        options1.callback_group = callback_group;
 
         odom_subscriber = this->create_subscription<nav_msgs::msg::Odometry>("odom", 10, std::bind(&OdomRecorderServer::odom_callback, this, _1), options1);
+
+        this->action_server_ = rclcpp_action::create_server<OdomRecord>(
+            this,
+            "record_odom",
+            std::bind(&OdomRecorderServer::handle_goal, this, _1, _2),
+            std::bind(&OdomRecorderServer::handle_cancel, this, _1),
+            std::bind(&OdomRecorderServer::handle_accepted, this, _1),
+            rcl_action_server_get_default_options(),
+            action_callback_group);
+
 
         start_point = geometry_msgs::msg::Point32();
         current_point = geometry_msgs::msg::Point32();
@@ -68,14 +69,14 @@ class OdomRecorderServer : public rclcpp::Node
     bool start_point_identified;
     bool check_completed_lap_flag;
 
-    rclcpp::CallbackGroup::SharedPtr odom_callback_group;
+    rclcpp::CallbackGroup::SharedPtr callback_group;
     rclcpp::CallbackGroup::SharedPtr action_callback_group;
 
     rclcpp_action::GoalResponse handle_goal(
         const rclcpp_action::GoalUUID & uuid,
         std::shared_ptr<const OdomRecord::Goal> goal)
     {
-        RCLCPP_INFO(this->get_logger(), "Received goal request");
+        RCLCPP_INFO(this->get_logger(), "Received goal request YEAHH");
         (void)uuid;
         return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
     }
@@ -99,7 +100,7 @@ class OdomRecorderServer : public rclcpp::Node
         if (this->check_completed_lap_flag){
             this->distance_to_start = sqrt(pow(this->current_point.x - this->start_point.x, 2) + pow(this->current_point.y - this->start_point.y, 2));
             // RCLCPP_INFO(this->get_logger(), "Distance to start point: '%f'", this->distance_to_start);
-            if (this->distance_to_start <= 0.05){
+            if (this->distance_to_start <= 0.2){
                 this->lap_finished = true;
             }
         }        
@@ -167,14 +168,17 @@ class OdomRecorderServer : public rclcpp::Node
 
     void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
     {
+        // RCLCPP_INFO(this->get_logger(), "ODOM topic");
         if (!this->start_point_identified){
             this->start_point.x = msg->pose.pose.position.x;
             this->start_point.y = msg->pose.pose.position.y;
             this->start_point_identified = true;
+            // RCLCPP_INFO(this->get_logger(), "IF");
         }
         else {
             this->current_point.x = msg->pose.pose.position.x;
-            this->current_point.y = msg->pose.pose.position.x;
+            this->current_point.y = msg->pose.pose.position.y;
+            // RCLCPP_INFO(this->get_logger(), "ELSE");
             check_completed_lap();
         }
     }

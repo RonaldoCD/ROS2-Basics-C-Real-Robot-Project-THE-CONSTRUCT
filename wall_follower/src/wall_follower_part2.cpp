@@ -245,6 +245,9 @@ int main(int argc, char * argv[])
         RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "service not available, waiting again...");
     }
 
+    rclcpp::Rate loop_rate(1);
+    loop_rate.sleep();
+
     auto result_future = client->async_send_request(request);
 
     if (rclcpp::spin_until_future_complete(node, result_future) ==
