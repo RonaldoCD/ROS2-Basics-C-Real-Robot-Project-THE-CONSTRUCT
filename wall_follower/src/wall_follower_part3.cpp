@@ -83,7 +83,7 @@ public:
         this->distance_to_wall = 0.0;
         this->distance_to_front_wall= 0.0;
         this->offset_angle = 0.0;
-        this->linear_vel = 0.1;
+        this->linear_vel = 0.08;
         this->angular_vel = 0.1;
         this->dist_tol = 0.02;
         this->angle_tol = 3.0*M_PI/180;
@@ -369,9 +369,9 @@ int main(int argc, char * argv[])
         rclcpp::FutureReturnCode::SUCCESS)
     {
         auto result = result_future.get();
-        RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "The robot is moving");
+        RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Find wall service has finished");
     } else {
-        RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "Failed to call service /moving");
+        RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "Failed to call service /find_wall");
     }
 
     

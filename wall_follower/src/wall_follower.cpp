@@ -55,7 +55,7 @@ public:
         this->distance_to_wall = 0.0;
         this->distance_to_front_wall= 0.0;
         this->offset_angle = 0.0;
-        this->linear_vel = 0.1;
+        this->linear_vel = 0.08;
         this->angular_vel = 0.1;
         this->dist_tol = 0.02;
         this->angle_tol = 3.0*M_PI/180;

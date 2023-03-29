@@ -31,7 +31,6 @@ class OdomRecorderServer : public rclcpp::Node
     {
         using namespace std::placeholders;
 
-        action_callback_group = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
         callback_group = this->create_callback_group(rclcpp::CallbackGroupType::Reentrant);
         rclcpp::SubscriptionOptions options1;
         options1.callback_group = callback_group;
@@ -45,7 +44,7 @@ class OdomRecorderServer : public rclcpp::Node
             std::bind(&OdomRecorderServer::handle_cancel, this, _1),
             std::bind(&OdomRecorderServer::handle_accepted, this, _1),
             rcl_action_server_get_default_options(),
-            action_callback_group);
+            callback_group);
 
 
         start_point = geometry_msgs::msg::Point32();
@@ -70,7 +69,6 @@ class OdomRecorderServer : public rclcpp::Node
     bool check_completed_lap_flag;
 
     rclcpp::CallbackGroup::SharedPtr callback_group;
-    rclcpp::CallbackGroup::SharedPtr action_callback_group;
 
     rclcpp_action::GoalResponse handle_goal(
         const rclcpp_action::GoalUUID & uuid,
@@ -97,12 +95,9 @@ class OdomRecorderServer : public rclcpp::Node
     }
 
     void check_completed_lap(){
-        if (this->check_completed_lap_flag){
-            this->distance_to_start = sqrt(pow(this->current_point.x - this->start_point.x, 2) + pow(this->current_point.y - this->start_point.y, 2));
-            // RCLCPP_INFO(this->get_logger(), "Distance to start point: '%f'", this->distance_to_start);
-            if (this->distance_to_start <= 0.2){
-                this->lap_finished = true;
-            }
+        this->distance_to_start = sqrt(pow(this->current_point.x - this->start_point.x, 2) + pow(this->current_point.y - this->start_point.y, 2));
+        if (this->check_completed_lap_flag && this->distance_to_start <= 0.1){
+            this->lap_finished = true;
         }        
     }
 
@@ -142,6 +137,7 @@ class OdomRecorderServer : public rclcpp::Node
             }
 
             loop_rate.sleep();
+            RCLCPP_INFO(this->get_logger(), "Distance to start point: '%f'", this->distance_to_start);
             vector_of_odoms.push_back(this->current_point);
             N += 1;
             delta_x = vector_of_odoms[N-2].x - vector_of_odoms[N-1].x;
@@ -176,6 +172,7 @@ class OdomRecorderServer : public rclcpp::Node
             // RCLCPP_INFO(this->get_logger(), "IF");
         }
         else {
+            this->current_point = geometry_msgs::msg::Point32();
             this->current_point.x = msg->pose.pose.position.x;
             this->current_point.y = msg->pose.pose.position.y;
             // RCLCPP_INFO(this->get_logger(), "ELSE");
